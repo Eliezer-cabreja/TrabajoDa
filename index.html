@@ -8,19 +8,7 @@
     <script>
         tailwind.config = {
             darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        brand: {
-                            50: '#eff6ff',
-                            100: '#dbeafe',
-                            500: '#3b82f6',
-                            600: '#2563eb',
-                            700: '#1d4ed8',
-                        }
-                    }
-                }
-            }
+            theme: { extend: { colors: { brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8' } } } }
         }
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -97,6 +85,9 @@
         let activeFilter = 'ALL';
         let searchQuery = '';
 
+        // Nombre del Excel que se buscará automáticamente junto al HTML
+        const EXCEL_FILENAME = "base_datos.xlsx"; // <-- Cambia aquí si tu archivo se llama diferente
+
         function buildDemoData() {
             const list = [];
             const prefixes = ["809", "829", "849"];
@@ -113,7 +104,12 @@
             initDatabase();
         };
 
-        function initDatabase() {
+        async function initDatabase() {
+            // 1) Intentar cargar el Excel automáticamente desde la misma ruta
+            const loaded = await autoLoadLocalExcel();
+            if (loaded) return;
+
+            // 2) Si no hay Excel, usar localStorage
             const saved = localStorage.getItem('simcards_db_simple');
             if (saved) {
                 try { rawData = JSON.parse(saved); } catch(e) { rawData = buildDemoData(); }
@@ -121,6 +117,43 @@
                 rawData = buildDemoData();
             }
             processGroupedData();
+        }
+
+        // Intenta cargar un Excel ubicado en la misma carpeta del HTML
+        async function autoLoadLocalExcel() {
+            const label = document.getElementById('dbInfoLabel');
+            try {
+                label.innerText = "Buscando Excel local...";
+                const response = await fetch(EXCEL_FILENAME, { cache: 'no-store' });
+                if (!response.ok) throw new Error("No se encontró el archivo");
+                const buffer = await response.arrayBuffer();
+                const data = new Uint8Array(buffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+                if (!json.length) throw new Error("Excel vacío");
+
+                rawData = json.map(row => {
+                    const keys = Object.keys(row);
+                    const subKey = keys.find(k => /subscriber|numero|celular|telefono/i.test(k)) || keys[0];
+                    const esnKey = keys.find(k => /esn|serie|sim|imei/i.test(k)) || keys[1];
+                    const descKey = keys.find(k => /item|tipo|desc/i.test(k)) || keys[2];
+                    return {
+                        SUBSCRIBER_NO: String(row[subKey] || '').trim(),
+                        UNIT_ESN: String(row[esnKey] || '').trim(),
+                        ITEM_DES: String(row[descKey] || 'SIM / IMEI').trim()
+                    };
+                });
+
+                localStorage.setItem('simcards_db_simple', JSON.stringify(rawData));
+                processGroupedData();
+                showToast('Excel local cargado automáticamente');
+                return true;
+            } catch (err) {
+                // Silencioso: no mostramos error, simplemente seguimos con localStorage/demo
+                console.warn("No se pudo cargar Excel automático:", err.message);
+                return false;
+            }
         }
 
         function processGroupedData() {
