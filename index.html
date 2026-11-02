@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Consulta SIM & IMEI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body class="h-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col justify-between">
+
+    <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 sticky top-0 z-20 shadow-sm">
+        <div class="max-w-lg mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-10 h-10 rounded-2xl bg-brand-600 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+                    <i data-lucide="smartphone" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base text-slate-900 dark:text-white leading-tight">Consulta SIM / IMEI</h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400" id="dbInfoLabel">Cargando base de datos...</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-1">
+                <label for="excelInput" class="p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors" title="Cargar Excel">
+                    <i data-lucide="file-up" class="w-5 h-5"></i>
+                    <input type="file" id="excelInput" accept=".xlsx, .xls, .csv" class="hidden" onchange="readExcelFile(event)">
+                </label>
+                <button onclick="toggleTheme()" class="p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                    <i data-lucide="moon" class="w-5 h-5 dark:hidden"></i>
+                    <i data-lucide="sun" class="w-5 h-5 hidden dark:block text-amber-400"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-lg w-full mx-auto p-4 flex flex-col gap-3 overflow-hidden">
+        <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <i data-lucide="search" class="w-5 h-5"></i>
+            </div>
+            <input type="text" id="searchField" placeholder="Buscar celular (809/829/849), SIM o IMEI..."
+                class="w-full pl-11 pr-10 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium"
+                oninput="handleSearch(this.value)" autocomplete="off">
+            <button id="clearBtn" onclick="clearSearch()" class="hidden absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400">
+                <i data-lucide="x-circle" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <div class="flex gap-2 text-xs font-semibold overflow-x-auto pb-1 no-scrollbar">
+            <button onclick="applyFilter('ALL')" id="tab-ALL" class="tab-btn px-4 py-2 rounded-xl bg-brand-600 text-white shadow-sm transition-all">
+                Todos (<span id="countAll">0</span>)
+            </button>
+            <button onclick="applyFilter('SIM')" id="tab-SIM" class="tab-btn px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 transition-all">
+                SIM Cards (<span id="countSim">0</span>)
+            </button>
+            <button onclick="applyFilter('IMEI')" id="tab-IMEI" class="tab-btn px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 transition-all">
+                IMEI (<span id="countImei">0</span>)
+            </button>
+        </div>
+
+        <div id="resultsList" class="flex-1 overflow-y-auto space-y-3 pt-1 pr-1"></div>
+    </main>
+
+    <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg opacity-0 pointer-events-none transition-all duration-300 flex items-center gap-2 z-50">
+        <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 dark:text-emerald-600"></i>
+        <span id="toastText">Copiado exitosamente</span>
+    </div>
+
+    <script>
+        let rawData = [];
+        let groupedData = [];
+        let activeFilter = 'ALL';
+        let searchQuery = '';
+
+        function buildDemoData() {
+            const list = [];
+            const prefixes = ["809", "829", "849"];
+            for (let i = 1; i <= 3085; i++) {
+                const subNo = prefixes[i % prefixes.length] + String(5000000 + i).padStart(7, '0');
+                list.push({ SUBSCRIBER_NO: subNo, UNIT_ESN: "89852100" + String(10000000 + i), ITEM_DES: "SIM CARD 4G" });
+                list.push({ SUBSCRIBER_NO: subNo, UNIT_ESN: "35492810" + String(10000000 + i), ITEM_DES: "EQUIPO IMEI" });
+            }
+            return list;
+        }
+
+        window.onload = function() {
+            lucide.createIcons();
+            initDatabase();
+        };
+
+        function initDatabase() {
+            const saved = localStorage.getItem('simcards_db_simple');
+            if (saved) {
+                try { rawData = JSON.parse(saved); } catch(e) { rawData = buildDemoData(); }
+            } else {
+                rawData = buildDemoData();
+            }
+            processGroupedData();
+        }
+
+        function processGroupedData() {
+            const map = new Map();
+            rawData.forEach(item => {
+                const subNo = String(item.SUBSCRIBER_NO || '').trim();
+                const esn = String(item.UNIT_ESN || '').trim();
+                const type = String(item.ITEM_DES || '').trim();
+                if (!subNo && !esn) return;
+                const key = subNo || `NO_SUB_${esn}`;
+                if (!map.has(key)) map.set(key, { subscriberNo: subNo, items: [] });
+                const isSim = type.toUpperCase().includes('SIM') || esn.length >= 18;
+                map.get(key).items.push({ esn: esn, type: isSim ? 'SIM CARD' : 'IMEI', isSim: isSim });
+            });
+            groupedData = Array.from(map.values());
+            updateCounters();
+            render();
+        }
+
+        function updateCounters() {
+            document.getElementById('dbInfoLabel').innerText = `${rawData.length.toLocaleString()} registros (${groupedData.length.toLocaleString()} números)`;
+            document.getElementById('countAll').innerText = groupedData.length.toLocaleString();
+            document.getElementById('countSim').innerText = groupedData.filter(g => g.items.some(i => i.isSim)).length.toLocaleString();
+            document.getElementById('countImei').innerText = groupedData.filter(g => g.items.some(i => !i.isSim)).length.toLocaleString();
+        }
+
+        function getFiltered() {
+            return groupedData.filter(group => {
+                if (activeFilter === 'SIM' && !group.items.some(i => i.isSim)) return false;
+                if (activeFilter === 'IMEI' && !group.items.some(i => !i.isSim)) return false;
+                if (!searchQuery) return true;
+                const q = searchQuery.toLowerCase().trim();
+                return group.subscriberNo.toLowerCase().includes(q) || group.items.some(i => i.esn.toLowerCase().includes(q));
+            });
+        }
+
+        function render() {
+            const container = document.getElementById('resultsList');
+            const filtered = getFiltered();
+            const limit = 50;
+            const visible = filtered.slice(0, limit);
+
+            if (visible.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-10 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                        <i data-lucide="search-x" class="w-8 h-8 mx-auto text-slate-400 mb-2"></i>
+                        <p class="text-sm font-semibold text-slate-600 dark:text-slate-300">Sin resultados</p>
+                        <p class="text-xs text-slate-400 mt-1">Verifica el número o serie ingresada</p>
+                    </div>`;
+                lucide.createIcons();
+                return;
+            }
+
+            let html = '';
+            visible.forEach(group => {
+                html += `
+                    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-sm space-y-2.5">
+                        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                            <div>
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Número de Servicio</span>
+                                <h3 class="text-base font-bold font-mono text-slate-900 dark:text-white tracking-wide">${highlight(group.subscriberNo || 'SIN NÚMERO')}</h3>
+                            </div>
+                            ${group.subscriberNo ? `
+                                <button onclick="copyText('${group.subscriberNo}', 'Número de Servicio')" class="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1 hover:bg-brand-500 hover:text-white transition-colors">
+                                    <i data-lucide="copy" class="w-3.5 h-3.5"></i><span>Copiar</span>
+                                </button>` : ''}
+                        </div>
+                        <div class="space-y-1.5">
+                            ${group.items.map(item => `
+                                <div class="flex items-center justify-between p-2.5 rounded-xl ${item.isSim ? 'bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 border border-blue-100 dark:border-blue-900/50' : 'bg-purple-50/70 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 border border-purple-100 dark:border-purple-900/50'}">
+                                    <div class="overflow-hidden pr-2">
+                                        <span class="text-[10px] font-bold block ${item.isSim ? 'text-blue-600 dark:text-blue-400' : 'text-purple-600 dark:text-purple-400'}">${item.type}</span>
+                                        <span class="text-xs font-mono font-bold tracking-tight block break-all">${highlight(item.esn)}</span>
+                                    </div>
+                                    <button onclick="copyText('${item.esn}', '${item.type}')" class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors flex-shrink-0">
+                                        <i data-lucide="copy" class="w-4 h-4"></i>
+                                    </button>
+                                </div>`).join('')}
+                        </div>
+                    </div>`;
+            });
+
+            if (filtered.length > limit) {
+                html += `<p class="text-center text-xs text-slate-400 py-2">Mostrando ${limit} de ${filtered.length.toLocaleString()} resultados</p>`;
+            }
+
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        function highlight(text) {
+            if (!searchQuery || !text) return text || '';
+            const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escaped})`, 'gi');
+            return text.replace(regex, '<mark class="bg-amber-200 dark:bg-amber-800 text-slate-900 dark:text-white rounded px-0.5">$1</mark>');
+        }
+
+        function handleSearch(val) {
+            searchQuery = val;
+            const clearBtn = document.getElementById('clearBtn');
+            if (val.length > 0) clearBtn.classList.remove('hidden');
+            else clearBtn.classList.add('hidden');
+            render();
+        }
+
+        function clearSearch() {
+            const input = document.getElementById('searchField');
+            input.value = '';
+            handleSearch('');
+            input.focus();
+        }
+
+        function applyFilter(filter) {
+            activeFilter = filter;
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('bg-brand-600', 'text-white');
+                btn.classList.add('bg-white', 'dark:bg-slate-900', 'text-slate-600', 'dark:text-slate-300');
+            });
+            const activeBtn = document.getElementById(`tab-${filter}`);
+            activeBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-600', 'dark:text-slate-300');
+            activeBtn.classList.add('bg-brand-600', 'text-white');
+            render();
+        }
+
+        function readExcelFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    const data = new Uint8Array(evt.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+                    if (json.length === 0) return alert("El archivo está vacío");
+                    rawData = json.map(row => {
+                        const keys = Object.keys(row);
+                        const subKey = keys.find(k => /subscriber|numero|celular|telefono/i.test(k)) || keys[0];
+                        const esnKey = keys.find(k => /esn|serie|sim|imei/i.test(k)) || keys[1];
+                        const descKey = keys.find(k => /item|tipo|desc/i.test(k)) || keys[2];
+                        return {
+                            SUBSCRIBER_NO: String(row[subKey] || '').trim(),
+                            UNIT_ESN: String(row[esnKey] || '').trim(),
+                            ITEM_DES: String(row[descKey] || 'SIM / IMEI').trim()
+                        };
+                    });
+                    localStorage.setItem('simcards_db_simple', JSON.stringify(rawData));
+                    processGroupedData();
+                    showToast('¡Excel cargado con éxito!');
+                } catch(err) {
+                    alert('Error al leer el archivo Excel: ' + err.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function copyText(text, label) {
+            if (!text) return;
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showToast(`${label} copiado`);
+            } catch (err) { console.error(err); }
+            document.body.removeChild(textarea);
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastText').innerText = msg;
+            toast.classList.remove('opacity-0', 'pointer-events-none');
+            toast.classList.add('opacity-100');
+            setTimeout(() => {
+                toast.classList.remove('opacity-100');
+                toast.classList.add('opacity-0', 'pointer-events-none');
+            }, 1800);
+        }
+
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+        }
+    </script>
+</body>
+</html>
